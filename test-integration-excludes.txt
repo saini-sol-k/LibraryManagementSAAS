@@ -1,0 +1,15 @@
+**/IntegrationTestBase.class
+**/*IntegrationTest.class
+**/student/*IntegrationTest.class
+**/security/*IntegrationTest.class
+**/organization/*IntegrationTest.class
+**/StudentServiceSecurityTest.class
+**/StudentControllerAuthIntegrationTest.class
+**/AuthControllerRefreshIntegrationTest.class
+**/AuthControllerRefreshTenantIntegrationTest.class
+**/StudentTenantIntegrationTest.class
+**/LibraryIntegrationTest.class
+**/MultiTenancyIntegrationTest.class
+**/OrganizationIntegrationTest.class
+**/RepositoryLayerTest.class
+**/ErrorHandlingIntegrationTest.class

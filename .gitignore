@@ -1,0 +1,24 @@
+﻿target/
+.idea/
+*.iml
+.vscode/
+.env
+*.log
+*.class
+/.mvn/wrapper/maven-wrapper.jar
+
+# Test / build output
+test-*.txt
+test-*.log
+compile-output.txt
+app_logs.txt
+server-*.log
+!test-integration-excludes.txt
+
+# IDE (Visual Studio)
+.vs/
+
+# IDE (Eclipse)
+.classpath
+.project
+.settings/

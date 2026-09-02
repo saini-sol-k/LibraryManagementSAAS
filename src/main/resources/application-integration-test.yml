@@ -1,0 +1,42 @@
+spring:
+  datasource:
+    # These values will be overridden by DynamicPropertyRegistry in IntegrationTestBase
+    # This is just a fallback configuration
+    url: jdbc:mysql://localhost:3306/librarydb
+    driverClassName: com.mysql.cj.jdbc.Driver
+    username: test
+    password: test
+  jpa:
+    hibernate:
+      ddl-auto: none
+    database-platform: org.hibernate.dialect.MySQL8Dialect
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          batch_size: 10
+          fetch_size: 50
+  flyway:
+    enabled: true
+    baselineOnMigrate: true
+  
+  # Connection pool configuration for integration tests
+  hikari:
+    connection-timeout: 60000
+    maximum-pool-size: 5
+    minimum-idle: 1
+    idle-timeout: 600000
+    max-lifetime: 1800000
+
+server:
+  port: 0
+
+# Logging configuration for test debugging
+logging:
+  level:
+    root: WARN
+    com.librarysaas: INFO
+    org.springframework.boot.test.context: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
