@@ -1,15 +1,44 @@
 package com.librarysaas.organization.dto;
 
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
 public class LibraryCreateRequest {
     
+    @NotBlank(message = "Library code is required")
+    @Size(max = 50, message = "Library code must not exceed 50 characters")
+    @Pattern(regexp = "^[A-Za-z0-9_-]+$",
+             message = "Library code may only contain letters, digits, hyphen and underscore")
     private String libraryCode;
+
+    @NotBlank(message = "Library name is required")
+    @Size(max = 200, message = "Library name must not exceed 200 characters")
     private String name;
+
+    @Size(max = 500, message = "Description must not exceed 500 characters")
     private String description;
+
+    @Email(message = "Email must be a well-formed email address")
+    @Size(max = 150, message = "Email must not exceed 150 characters")
     private String email;
+
+    @Size(max = 30, message = "Mobile must not exceed 30 characters")
+    @Pattern(regexp = "^[0-9+][0-9 ()-]{5,19}$", message = "Mobile must be a valid contact number")
     private String mobile;
+
+    // Format only. That opening precedes closing is a business rule owned by LibraryService.
+    @Pattern(regexp = "^([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d)?$", message = "Opening time must be a time of day in HH:mm or HH:mm:ss format")
     private String openingTime;
+
+    @Pattern(regexp = "^([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d)?$", message = "Closing time must be a time of day in HH:mm or HH:mm:ss format")
     private String closingTime;
+
+    @Size(max = 50, message = "Timezone must not exceed 50 characters")
     private String timezone;
+
+    @Size(max = 10, message = "Currency must not exceed 10 characters")
     private String currency;
 
     public LibraryCreateRequest() {}

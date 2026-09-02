@@ -1,23 +1,21 @@
 package com.librarysaas.organization.service.impl;
 
+import com.librarysaas.common.exception.BusinessException;
 import com.librarysaas.common.exception.ConflictException;
+import com.librarysaas.common.exception.ForbiddenException;
 import com.librarysaas.common.exception.ResourceNotFoundException;
 import com.librarysaas.library.entity.Library;
 import com.librarysaas.library.repository.LibraryRepository;
 import com.librarysaas.organization.entity.Organization;
 import com.librarysaas.organization.entity.UserLibrary;
-import com.librarysaas.organization.entity.UserLibraryKey;
 import com.librarysaas.organization.entity.UserOrganization;
-import com.librarysaas.organization.entity.UserOrganizationKey;
 import com.librarysaas.organization.repository.OrganizationRepository;
 import com.librarysaas.organization.repository.UserLibraryRepository;
 import com.librarysaas.organization.repository.UserOrganizationRepository;
 import com.librarysaas.organization.service.UserManagementService;
 import com.librarysaas.security.TenantAuthorizationService;
-import com.librarysaas.security.model.User;
 import com.librarysaas.security.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +23,8 @@ import java.time.LocalDateTime;
 
 @Service
 public class UserManagementServiceImpl implements UserManagementService {
+
+    private static final String STATUS_ACTIVE = OrganizationServiceImpl.STATUS_ACTIVE;
 
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
@@ -52,59 +52,65 @@ public class UserManagementServiceImpl implements UserManagementService {
     @Transactional
     @PreAuthorize("hasAuthority('USER_CREATE')")
     public void addUserToOrganization(Long organizationId, Long userId, Boolean isPrimary) {
-        Long currentUserId = tenantAuthorizationService.getCurrentUserId().orElse(null);
-        if (currentUserId == null) {
-            throw new AccessDeniedException("Access denied");
-        }
+        Long currentUserId = requireCurrentUserId();
 
         // Verify current user has access to organization
         tenantAuthorizationService.requireOrganizationAccess(currentUserId, organizationId);
 
-        // Verify organization exists
+        // Verify organization exists and is operating
         Organization org = organizationRepository.findById(organizationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
-
-        // Verify target user exists
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        // Check if already a member
-        if (userOrganizationRepository.findByUserIdAndOrganizationId(userId, organizationId).isPresent()) {
-            throw new ConflictException("User is already a member of this organization");
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found", "ORGANIZATION_NOT_FOUND"));
+        if (!STATUS_ACTIVE.equals(org.getStatus())) {
+            throw new BusinessException("Cannot add a user to an inactive organization", "ORGANIZATION_INACTIVE");
         }
 
-        // If setting as primary, unset any other primary
-        if (isPrimary) {
-            userOrganizationRepository.findPrimaryByUserId(userId)
-                    .ifPresent(uo -> {
-                        uo.setIsPrimary(false);
-                        userOrganizationRepository.save(uo);
-                    });
+        requireUserExists(userId);
+
+        boolean primary = Boolean.TRUE.equals(isPrimary);
+
+        // An existing membership is either a genuine conflict or a rejoin.
+        UserOrganization membership = userOrganizationRepository
+                .findByUserIdAndOrganizationId(userId, organizationId)
+                .orElse(null);
+        if (membership != null && STATUS_ACTIVE.equals(membership.getStatus())) {
+            throw new ConflictException("User is already a member of this organization",
+                    "USER_ALREADY_IN_ORGANIZATION");
         }
 
-        UserOrganization uo = new UserOrganization(userId, organizationId);
-        uo.setIsPrimary(isPrimary != null ? isPrimary : false);
-        uo.setStatus("ACTIVE");
-        uo.setJoinedAt(LocalDateTime.now());
-        uo.setCreatedAt(LocalDateTime.now());
+        if (primary) {
+            clearPrimaryOrganization(userId, organizationId);
+        }
 
-        userOrganizationRepository.save(uo);
+        if (membership == null) {
+            membership = new UserOrganization(userId, organizationId);
+            membership.setJoinedAt(LocalDateTime.now());
+            membership.setCreatedAt(LocalDateTime.now());
+        }
+        membership.setIsPrimary(primary);
+        membership.setStatus(STATUS_ACTIVE);
+
+        userOrganizationRepository.save(membership);
     }
 
     @Override
     @Transactional
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     public void removeUserFromOrganization(Long organizationId, Long userId) {
-        Long currentUserId = tenantAuthorizationService.getCurrentUserId().orElse(null);
-        if (currentUserId == null) {
-            throw new AccessDeniedException("Access denied");
-        }
+        Long currentUserId = requireCurrentUserId();
 
         // Verify current user has access to organization
         tenantAuthorizationService.requireOrganizationAccess(currentUserId, organizationId);
 
         UserOrganization uo = userOrganizationRepository.findByUserIdAndOrganizationId(userId, organizationId)
-                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this organization"));
+                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this organization",
+                        "USER_NOT_IN_ORGANIZATION"));
+
+        // An organization must never be left without an active member to administer it.
+        if (STATUS_ACTIVE.equals(uo.getStatus())
+                && userOrganizationRepository.findActiveByOrganizationId(organizationId).size() <= 1) {
+            throw new BusinessException("Cannot remove the last active member of an organization",
+                    "ORGANIZATION_LAST_MEMBER");
+        }
 
         // Also remove from all libraries in this organization
         libraryRepository.findByOrganizationId(organizationId).forEach(lib ->
@@ -119,64 +125,66 @@ public class UserManagementServiceImpl implements UserManagementService {
     @Transactional
     @PreAuthorize("hasAuthority('USER_CREATE')")
     public void addUserToLibrary(Long libraryId, Long userId, Boolean isPrimary) {
-        Long currentUserId = tenantAuthorizationService.getCurrentUserId().orElse(null);
-        if (currentUserId == null) {
-            throw new AccessDeniedException("Access denied");
-        }
+        Long currentUserId = requireCurrentUserId();
 
         // Verify library exists
         Library lib = libraryRepository.findById(libraryId)
-                .orElseThrow(() -> new ResourceNotFoundException("Library not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Library not found", "LIBRARY_NOT_FOUND"));
 
         // Verify current user has access to library
         tenantAuthorizationService.requireLibraryAccess(currentUserId, libraryId);
 
-        // Verify target user exists
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        // CRITICAL: Verify target user is a member of the library's organization
-        if (!tenantAuthorizationService.hasOrganizationAccess(userId, lib.getOrganization().getOrganizationId())) {
-            throw new AccessDeniedException("User is not a member of the library's organization");
+        if (!STATUS_ACTIVE.equals(lib.getStatus())) {
+            throw new BusinessException("Cannot add a user to an inactive library", "LIBRARY_INACTIVE");
         }
 
-        // Check if already a member
-        if (userLibraryRepository.findByUserIdAndLibraryId(userId, libraryId).isPresent()) {
-            throw new ConflictException("User is already a member of this library");
+        requireUserExists(userId);
+
+        // CRITICAL: a library membership may never widen the tenant boundary - the target
+        // user must already belong to the library's owning organization.
+        Organization org = lib.getOrganization();
+        if (org == null) {
+            throw new BusinessException("Library is not linked to an organization", "LIBRARY_ORGANIZATION_MISSING");
+        }
+        if (!tenantAuthorizationService.hasOrganizationAccess(userId, org.getOrganizationId())) {
+            throw new BusinessException("User is not a member of the library's organization",
+                    "USER_NOT_IN_ORGANIZATION");
         }
 
-        // If setting as primary, unset any other primary
-        if (isPrimary) {
-            userLibraryRepository.findPrimaryByUserId(userId)
-                    .ifPresent(ul -> {
-                        ul.setIsPrimary(false);
-                        userLibraryRepository.save(ul);
-                    });
+        boolean primary = Boolean.TRUE.equals(isPrimary);
+
+        UserLibrary membership = userLibraryRepository.findByUserIdAndLibraryId(userId, libraryId).orElse(null);
+        if (membership != null && STATUS_ACTIVE.equals(membership.getStatus())) {
+            throw new ConflictException("User is already a member of this library", "USER_ALREADY_IN_LIBRARY");
         }
 
-        UserLibrary ul = new UserLibrary(userId, libraryId);
-        ul.setIsPrimary(isPrimary != null ? isPrimary : false);
-        ul.setStatus("ACTIVE");
-        ul.setJoinedAt(LocalDateTime.now());
-        ul.setCreatedAt(LocalDateTime.now());
+        if (primary) {
+            clearPrimaryLibrary(userId, libraryId);
+        }
 
-        userLibraryRepository.save(ul);
+        if (membership == null) {
+            membership = new UserLibrary(userId, libraryId);
+            membership.setJoinedAt(LocalDateTime.now());
+            membership.setCreatedAt(LocalDateTime.now());
+        }
+        membership.setIsPrimary(primary);
+        membership.setStatus(STATUS_ACTIVE);
+
+        userLibraryRepository.save(membership);
     }
 
     @Override
     @Transactional
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     public void removeUserFromLibrary(Long libraryId, Long userId) {
-        Long currentUserId = tenantAuthorizationService.getCurrentUserId().orElse(null);
-        if (currentUserId == null) {
-            throw new AccessDeniedException("Access denied");
-        }
+        Long currentUserId = requireCurrentUserId();
 
         // Verify current user has access to library
         tenantAuthorizationService.requireLibraryAccess(currentUserId, libraryId);
 
         UserLibrary ul = userLibraryRepository.findByUserIdAndLibraryId(userId, libraryId)
-                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this library"));
+                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this library",
+                        "USER_NOT_IN_LIBRARY"));
 
         userLibraryRepository.delete(ul);
     }
@@ -185,30 +193,26 @@ public class UserManagementServiceImpl implements UserManagementService {
     @Transactional
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     public void setUserPrimaryOrganization(Long userId, Long organizationId) {
-        Long currentUserId = tenantAuthorizationService.getCurrentUserId().orElse(null);
-        if (currentUserId == null) {
-            throw new AccessDeniedException("Access denied");
-        }
+        Long currentUserId = requireCurrentUserId();
 
         // User can only set their own primary organization
         if (!currentUserId.equals(userId)) {
-            throw new AccessDeniedException("Can only set your own primary organization");
+            throw new ForbiddenException("Can only set your own primary organization");
         }
 
         // Verify user is member of this organization
         UserOrganization uo = userOrganizationRepository.findByUserIdAndOrganizationId(userId, organizationId)
-                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this organization"));
+                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this organization",
+                        "USER_NOT_IN_ORGANIZATION"));
 
-        // Unset any other primary
-        userOrganizationRepository.findPrimaryByUserId(userId)
-                .ifPresent(existing -> {
-                    if (!existing.getId().getOrganizationId().equals(organizationId)) {
-                        existing.setIsPrimary(false);
-                        userOrganizationRepository.save(existing);
-                    }
-                });
+        // Only an ACTIVE membership can be the primary tenant for a user.
+        if (!STATUS_ACTIVE.equals(uo.getStatus())) {
+            throw new BusinessException("Membership in this organization is not active",
+                    "ORGANIZATION_MEMBERSHIP_INACTIVE");
+        }
 
-        // Set this as primary
+        clearPrimaryOrganization(userId, organizationId);
+
         uo.setIsPrimary(true);
         userOrganizationRepository.save(uo);
     }
@@ -217,31 +221,58 @@ public class UserManagementServiceImpl implements UserManagementService {
     @Transactional
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     public void setUserPrimaryLibrary(Long userId, Long libraryId) {
-        Long currentUserId = tenantAuthorizationService.getCurrentUserId().orElse(null);
-        if (currentUserId == null) {
-            throw new AccessDeniedException("Access denied");
-        }
+        Long currentUserId = requireCurrentUserId();
 
         // User can only set their own primary library
         if (!currentUserId.equals(userId)) {
-            throw new AccessDeniedException("Can only set your own primary library");
+            throw new ForbiddenException("Can only set your own primary library");
         }
 
         // Verify user is member of this library
         UserLibrary ul = userLibraryRepository.findByUserIdAndLibraryId(userId, libraryId)
-                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this library"));
+                .orElseThrow(() -> new ResourceNotFoundException("User is not a member of this library",
+                        "USER_NOT_IN_LIBRARY"));
 
-        // Unset any other primary
-        userLibraryRepository.findPrimaryByUserId(userId)
-                .ifPresent(existing -> {
-                    if (!existing.getId().getLibraryId().equals(libraryId)) {
-                        existing.setIsPrimary(false);
-                        userLibraryRepository.save(existing);
-                    }
-                });
+        // Only an ACTIVE membership can be the primary tenant for a user.
+        if (!STATUS_ACTIVE.equals(ul.getStatus())) {
+            throw new BusinessException("Membership in this library is not active",
+                    "LIBRARY_MEMBERSHIP_INACTIVE");
+        }
 
-        // Set this as primary
+        clearPrimaryLibrary(userId, libraryId);
+
         ul.setIsPrimary(true);
         userLibraryRepository.save(ul);
+    }
+
+    private Long requireCurrentUserId() {
+        return tenantAuthorizationService.getCurrentUserId()
+                .orElseThrow(() -> new ForbiddenException("You do not have permission to perform this operation"));
+    }
+
+    private void requireUserExists(Long userId) {
+        if (userId == null || !userRepository.existsById(userId)) {
+            throw new ResourceNotFoundException("User not found", "USER_NOT_FOUND");
+        }
+    }
+
+    /** A user has at most one primary organization; demote any other before promoting. */
+    private void clearPrimaryOrganization(Long userId, Long keepOrganizationId) {
+        userOrganizationRepository.findPrimaryByUserId(userId)
+                .filter(existing -> !existing.getId().getOrganizationId().equals(keepOrganizationId))
+                .ifPresent(existing -> {
+                    existing.setIsPrimary(false);
+                    userOrganizationRepository.save(existing);
+                });
+    }
+
+    /** A user has at most one primary library; demote any other before promoting. */
+    private void clearPrimaryLibrary(Long userId, Long keepLibraryId) {
+        userLibraryRepository.findPrimaryByUserId(userId)
+                .filter(existing -> !existing.getId().getLibraryId().equals(keepLibraryId))
+                .ifPresent(existing -> {
+                    existing.setIsPrimary(false);
+                    userLibraryRepository.save(existing);
+                });
     }
 }

@@ -1,5 +1,8 @@
 package com.librarysaas.organization.service.impl;
 
+import com.librarysaas.common.exception.BusinessException;
+import com.librarysaas.common.exception.ConflictException;
+import com.librarysaas.common.exception.DuplicateResourceException;
 import com.librarysaas.common.exception.ResourceNotFoundException;
 import com.librarysaas.common.exception.ForbiddenException;
 import com.librarysaas.library.entity.Library;
@@ -14,18 +17,27 @@ import com.librarysaas.organization.repository.UserLibraryRepository;
 import com.librarysaas.organization.service.LibraryService;
 import com.librarysaas.security.TenantAuthorizationService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 public class LibraryServiceImpl implements LibraryService {
+
+    private static final String STATUS_ACTIVE = OrganizationServiceImpl.STATUS_ACTIVE;
+    private static final String STATUS_INACTIVE = OrganizationServiceImpl.STATUS_INACTIVE;
+
+    private static final Set<String> ALLOWED_STATUSES =
+            Set.of(STATUS_ACTIVE, STATUS_INACTIVE, OrganizationServiceImpl.STATUS_SUSPENDED);
+
+    private static final String DEFAULT_TIMEZONE = "Asia/Kolkata";
+    private static final String DEFAULT_CURRENCY = "INR";
 
     private final LibraryRepository libraryRepository;
     private final OrganizationRepository organizationRepository;
@@ -58,23 +70,39 @@ public class LibraryServiceImpl implements LibraryService {
         Organization org = organizationRepository.findById(organizationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Organization not found", "ORGANIZATION_NOT_FOUND"));
 
+        // A library may only be opened under an operating organization.
+        if (!STATUS_ACTIVE.equals(org.getStatus())) {
+            throw new BusinessException("Cannot create a library under an inactive organization",
+                    "ORGANIZATION_INACTIVE");
+        }
+
+        String libraryCode = normalizeCode(request.getLibraryCode());
+        if (libraryCode == null) {
+            throw new BusinessException("Library code is required", "LIBRARY_CODE_REQUIRED");
+        }
+
+        // Library code is unique per organization (uk_library_org_code)
+        if (libraryRepository.findByLibraryCodeAndOrganizationId(libraryCode, organizationId).isPresent()) {
+            throw new DuplicateResourceException("Library code already exists in this organization",
+                    "LIBRARY_CODE_ALREADY_EXISTS");
+        }
+
+        LocalTime openingTime = parseTime(request.getOpeningTime(), "openingTime");
+        LocalTime closingTime = parseTime(request.getClosingTime(), "closingTime");
+        requireValidOperatingHours(openingTime, closingTime);
+
         Library lib = new Library();
         lib.setOrganization(org);
-        lib.setLibraryCode(request.getLibraryCode());
+        lib.setLibraryCode(libraryCode);
         lib.setName(request.getName());
         lib.setDescription(request.getDescription());
         lib.setEmail(request.getEmail());
         lib.setMobile(request.getMobile());
-        lib.setStatus("ACTIVE");
-        lib.setTimezone(request.getTimezone() != null ? request.getTimezone() : "Asia/Kolkata");
-        lib.setCurrency(request.getCurrency() != null ? request.getCurrency() : "INR");
-        
-        if (request.getOpeningTime() != null) {
-            lib.setOpeningTime(LocalTime.parse(request.getOpeningTime()));
-        }
-        if (request.getClosingTime() != null) {
-            lib.setClosingTime(LocalTime.parse(request.getClosingTime()));
-        }
+        lib.setStatus(STATUS_ACTIVE);
+        lib.setTimezone(request.getTimezone() != null ? request.getTimezone() : DEFAULT_TIMEZONE);
+        lib.setCurrency(request.getCurrency() != null ? request.getCurrency() : DEFAULT_CURRENCY);
+        lib.setOpeningTime(openingTime);
+        lib.setClosingTime(closingTime);
 
         lib.setCreatedAt(LocalDateTime.now());
         lib.setUpdatedAt(LocalDateTime.now());
@@ -128,7 +156,7 @@ public class LibraryServiceImpl implements LibraryService {
         // Verify user has access to this organization
         tenantAuthorizationService.requireOrganizationAccess(currentUserId, organizationId);
 
-        List<Library> libraries = libraryRepository.findByOrganizationIdAndStatus(organizationId, "ACTIVE");
+        List<Library> libraries = libraryRepository.findByOrganizationIdAndStatus(organizationId, STATUS_ACTIVE);
         return libraries.stream()
                 .map(LibraryResponse::from)
                 .collect(Collectors.toList());
@@ -162,7 +190,16 @@ public class LibraryServiceImpl implements LibraryService {
             lib.setMobile(request.getMobile());
         }
         if (request.getStatus() != null) {
-            lib.setStatus(request.getStatus());
+            String status = OrganizationServiceImpl.normalizeStatus(request.getStatus());
+            if (!ALLOWED_STATUSES.contains(status)) {
+                throw new BusinessException("Invalid library status: " + request.getStatus(),
+                        "INVALID_LIBRARY_STATUS");
+            }
+            // A library cannot be reactivated while its organization is not operating.
+            if (STATUS_ACTIVE.equals(status) && !STATUS_ACTIVE.equals(lib.getStatus())) {
+                requireActiveOrganization(lib);
+            }
+            lib.setStatus(status);
         }
         if (request.getTimezone() != null) {
             lib.setTimezone(request.getTimezone());
@@ -171,11 +208,13 @@ public class LibraryServiceImpl implements LibraryService {
             lib.setCurrency(request.getCurrency());
         }
         if (request.getOpeningTime() != null) {
-            lib.setOpeningTime(LocalTime.parse(request.getOpeningTime()));
+            lib.setOpeningTime(parseTime(request.getOpeningTime(), "openingTime"));
         }
         if (request.getClosingTime() != null) {
-            lib.setClosingTime(LocalTime.parse(request.getClosingTime()));
+            lib.setClosingTime(parseTime(request.getClosingTime(), "closingTime"));
         }
+        // Validate against the resulting pair, not just the fields present in the request.
+        requireValidOperatingHours(lib.getOpeningTime(), lib.getClosingTime());
 
         lib.setUpdatedAt(LocalDateTime.now());
         Library saved = libraryRepository.save(lib);
@@ -199,8 +238,52 @@ public class LibraryServiceImpl implements LibraryService {
             tenantAuthorizationService.requireOrganizationAccess(currentUserId, lib.getOrganization().getOrganizationId());
         }
 
-        lib.setStatus("INACTIVE");
+        if (STATUS_INACTIVE.equals(lib.getStatus())) {
+            throw new ConflictException("Library is already inactive", "LIBRARY_ALREADY_INACTIVE");
+        }
+
+        lib.setStatus(STATUS_INACTIVE);
         lib.setUpdatedAt(LocalDateTime.now());
         libraryRepository.save(lib);
+    }
+
+    private void requireActiveOrganization(Library lib) {
+        Organization org = lib.getOrganization();
+        if (org == null || !STATUS_ACTIVE.equals(org.getStatus())) {
+            throw new BusinessException("Cannot activate a library under an inactive organization",
+                    "ORGANIZATION_INACTIVE");
+        }
+    }
+
+    /**
+     * Operating hours are supplied as strings by the API layer. An unparseable value is a
+     * client mistake, not a server fault, so it must not escape as a raw
+     * {@link DateTimeParseException}.
+     */
+    private static LocalTime parseTime(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalTime.parse(value.trim());
+        } catch (DateTimeParseException e) {
+            throw new BusinessException(
+                    "Invalid " + fieldName + ": expected HH:mm or HH:mm:ss but was '" + value + "'",
+                    "INVALID_TIME_FORMAT");
+        }
+    }
+
+    private static void requireValidOperatingHours(LocalTime openingTime, LocalTime closingTime) {
+        if (openingTime != null && closingTime != null && !openingTime.isBefore(closingTime)) {
+            throw new BusinessException("Opening time must be before closing time",
+                    "INVALID_OPERATING_HOURS");
+        }
+    }
+
+    private static String normalizeCode(String code) {
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        return code.trim().toUpperCase();
     }
 }
