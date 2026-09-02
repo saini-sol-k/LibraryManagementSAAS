@@ -61,7 +61,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
             }
         } catch (Exception e) {
-            log.debug("Failed to process JWT authentication: {}", e.getMessage());
+            // Never log the exception message or the header: both can contain token material.
+            // The request simply stays unauthenticated and the entry point returns 401.
+            log.debug("Failed to process JWT authentication: {}", e.getClass().getSimpleName());
         }
 
         try {

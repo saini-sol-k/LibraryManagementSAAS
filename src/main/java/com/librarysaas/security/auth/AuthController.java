@@ -125,6 +125,22 @@ public class AuthController {
         return ResponseEntity.ok(new ApiResponse<>(true, "Logged out", null));
     }
 
-    public static record LoginRequest(@NotBlank String identifier, @NotBlank String password) {}
-    public static record RefreshRequest(@NotBlank String refreshToken) {}
+    /**
+     * Spring MVC logs the deserialized request body at DEBUG, and a record's generated
+     * toString() would put the plaintext credential in the log file. Both records redact
+     * their secret component so the credential cannot leak at any log level or profile.
+     */
+    public static record LoginRequest(@NotBlank String identifier, @NotBlank String password) {
+        @Override
+        public String toString() {
+            return "LoginRequest[identifier=" + identifier + ", password=***]";
+        }
+    }
+
+    public static record RefreshRequest(@NotBlank String refreshToken) {
+        @Override
+        public String toString() {
+            return "RefreshRequest[refreshToken=***]";
+        }
+    }
 }

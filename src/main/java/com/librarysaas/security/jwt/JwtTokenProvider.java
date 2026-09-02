@@ -20,7 +20,7 @@ public class JwtTokenProvider {
 
     public JwtTokenProvider(JwtProperties props) {
         this.props = props;
-        this.key = Keys.hmacShaKeyFor(props.getSecret().getBytes());
+        this.key = Keys.hmacShaKeyFor(props.getSecretBytes());
     }
 
     public String createToken(Authentication authentication) {
@@ -46,7 +46,8 @@ public class JwtTokenProvider {
             Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
             return true;
         } catch (JwtException | IllegalArgumentException e) {
-            log.debug("Invalid JWT: {}", e.getMessage());
+            // Log the failure type only: parser messages can echo parts of the token.
+            log.debug("JWT validation failed: {}", e.getClass().getSimpleName());
         }
         return false;
     }
