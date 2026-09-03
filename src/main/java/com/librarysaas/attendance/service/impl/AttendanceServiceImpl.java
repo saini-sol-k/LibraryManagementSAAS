@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
 
@@ -120,6 +121,20 @@ public class AttendanceServiceImpl implements AttendanceService {
         return AttendanceResponse.from(requireAttendance(attendanceId));
     }
 
+    /**
+     * The current time at the precision the database actually stores.
+     *
+     * check_in_time and check_out_time are TIMESTAMP columns with no fractional
+     * seconds, and MySQL ROUNDS to the nearest second rather than truncating. An
+     * unrounded value therefore comes back up to half a second later than it was
+     * written, which made a fast check-in followed by check-out look like a visit
+     * that ended before it began. Working in whole seconds keeps what is stored
+     * identical to what was set, and keeps the derived duration stable.
+     */
+    private static LocalDateTime nowToStoredPrecision() {
+        return LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
+    }
+
     /* --------------------------------------------------------------- writes */
 
     /**
@@ -144,7 +159,7 @@ public class AttendanceServiceImpl implements AttendanceService {
 
         Seat seat = resolveSeat(libraryId, student, request.getSeatId());
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = nowToStoredPrecision();
 
         Attendance attendance = new Attendance();
         attendance.setLibrary(library);
@@ -170,7 +185,7 @@ public class AttendanceServiceImpl implements AttendanceService {
                     "ATTENDANCE_ALREADY_CLOSED");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = nowToStoredPrecision();
         LocalDateTime checkIn = attendance.getCheckInTime();
 
         // A clock adjustment must not produce a negative stay.
