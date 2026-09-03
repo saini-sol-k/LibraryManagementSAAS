@@ -13,11 +13,13 @@ spec:
     matchLabels:
       app.kubernetes.io/name: library-saas
       app.kubernetes.io/component: backend
+  # Recreate, not RollingUpdate: a rolling update briefly runs two pods, and on a
+  # 2-CPU / 3.8 GiB Docker VM that also hosts Jenkins and the test containers the
+  # contention starved the outgoing pod's probes until it was killed, which then
+  # blocked the rollout. With one replica the surge buys nothing. Trade-off: a few
+  # seconds of downtime during a deploy.
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+    type: Recreate
   template:
     metadata:
       labels:
@@ -53,7 +55,7 @@ spec:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 5
-            timeoutSeconds: 3
+            timeoutSeconds: 6
             failureThreshold: 30
 
           readinessProbe:
@@ -61,16 +63,19 @@ spec:
               path: /actuator/health
               port: http
             periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
+            timeoutSeconds: 6
+            failureThreshold: 4
 
+          # Liveness restarts the container, so it is deliberately slower to fire
+          # than readiness: a host under load should drop out of service, not be
+          # killed and restarted.
           livenessProbe:
             httpGet:
               path: /actuator/health
               port: http
             periodSeconds: 20
-            timeoutSeconds: 3
-            failureThreshold: 3
+            timeoutSeconds: 6
+            failureThreshold: 6
 
           resources:
             requests:
