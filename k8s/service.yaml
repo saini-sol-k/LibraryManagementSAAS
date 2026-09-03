@@ -1,0 +1,21 @@
+# ClusterIP + `kubectl port-forward`. NodePort was tried and does not work here:
+# this Docker Desktop node is kind-based, so node ports are not published to the
+# Windows host and the node IP (172.19.x) is not routable from it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: library-saas-backend
+  namespace: library-saas
+  labels:
+    app.kubernetes.io/name: library-saas
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: library-saas
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

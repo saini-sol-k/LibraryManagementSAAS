@@ -1,0 +1,25 @@
+# Keep the build context small. Only the built jar is needed.
+target/*
+!target/library-saas-backend-*.jar
+target/*-sources.jar
+target/*-javadoc.jar
+
+# Accidental nested clone of this repository - 65 MB, never belongs in an image
+LibraryManagementSAAS/
+
+.git/
+.github/
+.idea/
+.vs/
+.settings/
+.classpath
+.project
+
+deploy/
+k8s/
+src/
+*.log
+test-*.txt
+*.md
+LibrarySaaS-E2E-API-Collection.postman_collection.json
+.env

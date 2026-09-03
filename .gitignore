@@ -22,3 +22,9 @@ server-*.log
 .classpath
 .project
 .settings/
+
+# Jenkins pipeline runtime (logs, pid file)
+deploy/
+
+# Accidental nested clone of this repository - not part of the project
+/LibraryManagementSAAS/

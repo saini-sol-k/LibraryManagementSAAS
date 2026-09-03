@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: library-saas
+  labels:
+    app.kubernetes.io/name: library-saas
+    app.kubernetes.io/part-of: library-saas
