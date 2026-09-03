@@ -1,7 +1,7 @@
 package com.librarysaas.common.exception;
 
 /**
- * Thrown when a business rule is violated.
+ * Thrown when a business rule is violated .
  * Examples: Organization is inactive, user not a member, etc.
  */
 public class BusinessException extends RuntimeException {
