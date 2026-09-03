@@ -5,6 +5,7 @@ import com.librarysaas.common.exception.ConflictException;
 import com.librarysaas.common.exception.ForbiddenException;
 import com.librarysaas.common.exception.ResourceNotFoundException;
 import com.librarysaas.library.entity.Library;
+import com.librarysaas.organization.dto.MembershipResponse;
 import com.librarysaas.library.repository.LibraryRepository;
 import com.librarysaas.organization.entity.Organization;
 import com.librarysaas.organization.entity.UserLibrary;
@@ -20,11 +21,23 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
 
 @Service
 public class UserManagementServiceImpl implements UserManagementService {
 
     private static final String STATUS_ACTIVE = OrganizationServiceImpl.STATUS_ACTIVE;
+    private static final String STATUS_INACTIVE = OrganizationServiceImpl.STATUS_INACTIVE;
+
+    /**
+     * Statuses a membership may hold. SUSPENDED is deliberately excluded: the
+     * organization and library entities use it, but nothing in the membership
+     * rules distinguishes it from INACTIVE, so admitting it would create a
+     * state with no defined behaviour.
+     */
+    private static final Set<String> ALLOWED_MEMBERSHIP_STATUSES =
+            Set.of(STATUS_ACTIVE, STATUS_INACTIVE);
 
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
@@ -146,7 +159,7 @@ public class UserManagementServiceImpl implements UserManagementService {
         if (org == null) {
             throw new BusinessException("Library is not linked to an organization", "LIBRARY_ORGANIZATION_MISSING");
         }
-        if (!tenantAuthorizationService.hasOrganizationAccess(userId, org.getOrganizationId())) {
+        if (!isActiveOrganizationMember(userId, org.getOrganizationId())) {
             throw new BusinessException("User is not a member of the library's organization",
                     "USER_NOT_IN_ORGANIZATION");
         }
@@ -245,9 +258,161 @@ public class UserManagementServiceImpl implements UserManagementService {
         userLibraryRepository.save(ul);
     }
 
+    /* --------------------------------------------------------------- reads */
+
+    @Override
+    @Transactional(readOnly = true)
+    @PreAuthorize("hasAuthority('USER_VIEW')")
+    public List<MembershipResponse> getOrganizationMembers(Long organizationId) {
+        Long currentUserId = requireCurrentUserId();
+
+        // Resolve the organization first so an unknown id is 404, not 403.
+        if (!organizationRepository.existsById(organizationId)) {
+            throw new ResourceNotFoundException("Organization not found", "ORGANIZATION_NOT_FOUND");
+        }
+        tenantAuthorizationService.requireOrganizationAccess(currentUserId, organizationId);
+
+        return userOrganizationRepository.findAllByOrganizationIdWithUser(organizationId).stream()
+                .map(MembershipResponse::from)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    @PreAuthorize("hasAuthority('USER_VIEW')")
+    public List<MembershipResponse> getLibraryMembers(Long libraryId) {
+        Long currentUserId = requireCurrentUserId();
+
+        if (!libraryRepository.existsById(libraryId)) {
+            throw new ResourceNotFoundException("Library not found", "LIBRARY_NOT_FOUND");
+        }
+        tenantAuthorizationService.requireLibraryAccess(currentUserId, libraryId);
+
+        return userLibraryRepository.findAllByLibraryIdWithUser(libraryId).stream()
+                .map(MembershipResponse::from)
+                .toList();
+    }
+
+    /* ------------------------------------------------------- status changes */
+
+    @Override
+    @Transactional
+    @PreAuthorize("hasAuthority('USER_UPDATE')")
+    public MembershipResponse updateOrganizationMembershipStatus(Long organizationId, Long userId,
+                                                                 String status) {
+        Long currentUserId = requireCurrentUserId();
+        tenantAuthorizationService.requireOrganizationAccess(currentUserId, organizationId);
+
+        String newStatus = normaliseMembershipStatus(status);
+
+        UserOrganization uo = userOrganizationRepository
+                .findByUserIdAndOrganizationId(userId, organizationId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "User is not a member of this organization", "USER_NOT_IN_ORGANIZATION"));
+
+        if (newStatus.equals(uo.getStatus())) {
+            throw new ConflictException("Membership is already " + newStatus,
+                    "MEMBERSHIP_STATUS_UNCHANGED");
+        }
+
+        if (STATUS_ACTIVE.equals(newStatus)) {
+            // Reactivating mirrors adding: an inactive organization takes no members.
+            Organization org = organizationRepository.findById(organizationId)
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Organization not found", "ORGANIZATION_NOT_FOUND"));
+            if (!STATUS_ACTIVE.equals(org.getStatus())) {
+                throw new BusinessException("Cannot activate a membership of an inactive organization",
+                        "ORGANIZATION_INACTIVE");
+            }
+        } else {
+            // Deactivating is subject to the same protection as removal.
+            if (userOrganizationRepository.findActiveByOrganizationId(organizationId).size() <= 1) {
+                throw new BusinessException("Cannot deactivate the last active member of an organization",
+                        "ORGANIZATION_LAST_MEMBER");
+            }
+            // Only an ACTIVE membership may be primary, so drop the flag with it.
+            uo.setIsPrimary(false);
+        }
+
+        uo.setStatus(newStatus);
+        return MembershipResponse.from(userOrganizationRepository.save(uo));
+    }
+
+    @Override
+    @Transactional
+    @PreAuthorize("hasAuthority('USER_UPDATE')")
+    public MembershipResponse updateLibraryMembershipStatus(Long libraryId, Long userId, String status) {
+        Long currentUserId = requireCurrentUserId();
+        tenantAuthorizationService.requireLibraryAccess(currentUserId, libraryId);
+
+        String newStatus = normaliseMembershipStatus(status);
+
+        UserLibrary ul = userLibraryRepository.findByUserIdAndLibraryId(userId, libraryId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "User is not a member of this library", "USER_NOT_IN_LIBRARY"));
+
+        if (newStatus.equals(ul.getStatus())) {
+            throw new ConflictException("Membership is already " + newStatus,
+                    "MEMBERSHIP_STATUS_UNCHANGED");
+        }
+
+        if (STATUS_ACTIVE.equals(newStatus)) {
+            Library lib = libraryRepository.findById(libraryId)
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Library not found", "LIBRARY_NOT_FOUND"));
+            if (!STATUS_ACTIVE.equals(lib.getStatus())) {
+                throw new BusinessException("Cannot activate a membership of an inactive library",
+                        "LIBRARY_INACTIVE");
+            }
+            // Reactivating must not widen the tenant boundary either: the user
+            // still has to belong to the owning organization.
+            Organization org = lib.getOrganization();
+            if (org == null) {
+                throw new BusinessException("Library is not linked to an organization",
+                        "LIBRARY_ORGANIZATION_MISSING");
+            }
+            if (!isActiveOrganizationMember(userId, org.getOrganizationId())) {
+                throw new BusinessException("User is not a member of the owning organization",
+                        "USER_NOT_IN_ORGANIZATION");
+            }
+        } else {
+            ul.setIsPrimary(false);
+        }
+
+        ul.setStatus(newStatus);
+        return MembershipResponse.from(userLibraryRepository.save(ul));
+    }
+
+    /** Membership statuses are a closed set; anything else is a business error. */
+    private String normaliseMembershipStatus(String requested) {
+        String status = requested == null ? "" : requested.trim().toUpperCase();
+        if (!ALLOWED_MEMBERSHIP_STATUSES.contains(status)) {
+            throw new BusinessException(
+                    "Invalid membership status: " + requested + ". Allowed: "
+                            + String.join(", ", ALLOWED_MEMBERSHIP_STATUSES),
+                    "INVALID_MEMBERSHIP_STATUS");
+        }
+        return status;
+    }
+
     private Long requireCurrentUserId() {
         return tenantAuthorizationService.getCurrentUserId()
                 .orElseThrow(() -> new ForbiddenException("You do not have permission to perform this operation"));
+    }
+
+    /**
+     * Whether the <em>target</em> user actually holds an active membership of an
+     * organization.
+     *
+     * Deliberately not TenantAuthorizationService.hasOrganizationAccess: that
+     * answers "may the caller reach this organization" and short-circuits to
+     * true for a super admin, so using it here would let a super admin grant a
+     * library membership to someone outside the owning organization. This asks
+     * the membership table directly and so is independent of who is calling.
+     */
+    private boolean isActiveOrganizationMember(Long userId, Long organizationId) {
+        return userId != null && organizationId != null
+                && userOrganizationRepository.existsInOrganization(userId, organizationId);
     }
 
     private void requireUserExists(Long userId) {

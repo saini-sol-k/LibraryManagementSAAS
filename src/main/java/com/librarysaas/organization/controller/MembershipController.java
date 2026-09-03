@@ -2,6 +2,8 @@ package com.librarysaas.organization.controller;
 
 import com.librarysaas.common.response.ApiResponse;
 import com.librarysaas.organization.dto.MembershipRequest;
+import com.librarysaas.organization.dto.MembershipResponse;
+import com.librarysaas.organization.dto.MembershipStatusRequest;
 import com.librarysaas.organization.service.UserManagementService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -11,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * Organization and library membership APIs.
@@ -29,6 +33,18 @@ public class MembershipController {
     @Autowired
     public MembershipController(UserManagementService userManagementService) {
         this.userManagementService = userManagementService;
+    }
+
+    @GetMapping("/organizations/{organizationId}/members")
+    @PreAuthorize("hasAuthority('USER_VIEW')")
+    @Operation(summary = "List an organization's members",
+            description = "Primary membership first, then by join date. Includes deactivated "
+                    + "memberships so they can be reactivated. Requires active membership of "
+                    + "the organization.")
+    public ResponseEntity<ApiResponse<List<MembershipResponse>>> listOrganizationMembers(
+            @PathVariable Long organizationId) {
+        List<MembershipResponse> members = userManagementService.getOrganizationMembers(organizationId);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Members retrieved", members));
     }
 
     @PostMapping("/organizations/{organizationId}/members")
@@ -56,6 +72,21 @@ public class MembershipController {
         return ResponseEntity.ok(new ApiResponse<>(true, "User removed from organization", null));
     }
 
+    @PutMapping("/organizations/{organizationId}/members/{userId}/status")
+    @PreAuthorize("hasAuthority('USER_UPDATE')")
+    @Operation(summary = "Activate or deactivate an organization membership",
+            description = "ACTIVE or INACTIVE. Deactivating keeps the row and its join date, "
+                    + "unlike removal, and clears the primary flag. The last active member of "
+                    + "an organization cannot be deactivated.")
+    public ResponseEntity<ApiResponse<MembershipResponse>> updateOrganizationMembershipStatus(
+            @PathVariable Long organizationId,
+            @PathVariable Long userId,
+            @Valid @RequestBody MembershipStatusRequest request) {
+        MembershipResponse membership = userManagementService
+                .updateOrganizationMembershipStatus(organizationId, userId, request.getStatus());
+        return ResponseEntity.ok(new ApiResponse<>(true, "Membership status updated", membership));
+    }
+
     @PutMapping("/organizations/{organizationId}/members/{userId}/primary")
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     @Operation(summary = "Set the caller's primary organization",
@@ -66,6 +97,17 @@ public class MembershipController {
             @PathVariable Long userId) {
         userManagementService.setUserPrimaryOrganization(userId, organizationId);
         return ResponseEntity.ok(new ApiResponse<>(true, "Primary organization updated", null));
+    }
+
+    @GetMapping("/libraries/{libraryId}/members")
+    @PreAuthorize("hasAuthority('USER_VIEW')")
+    @Operation(summary = "List a library's members",
+            description = "Primary membership first, then by join date. Includes deactivated "
+                    + "memberships. Requires active membership of the library.")
+    public ResponseEntity<ApiResponse<List<MembershipResponse>>> listLibraryMembers(
+            @PathVariable Long libraryId) {
+        List<MembershipResponse> members = userManagementService.getLibraryMembers(libraryId);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Members retrieved", members));
     }
 
     @PostMapping("/libraries/{libraryId}/members")
@@ -88,6 +130,21 @@ public class MembershipController {
             @PathVariable Long userId) {
         userManagementService.removeUserFromLibrary(libraryId, userId);
         return ResponseEntity.ok(new ApiResponse<>(true, "User removed from library", null));
+    }
+
+    @PutMapping("/libraries/{libraryId}/members/{userId}/status")
+    @PreAuthorize("hasAuthority('USER_UPDATE')")
+    @Operation(summary = "Activate or deactivate a library membership",
+            description = "ACTIVE or INACTIVE. Reactivating requires the user to still be a "
+                    + "member of the library's organization, so a status change can never "
+                    + "widen the tenant boundary.")
+    public ResponseEntity<ApiResponse<MembershipResponse>> updateLibraryMembershipStatus(
+            @PathVariable Long libraryId,
+            @PathVariable Long userId,
+            @Valid @RequestBody MembershipStatusRequest request) {
+        MembershipResponse membership = userManagementService
+                .updateLibraryMembershipStatus(libraryId, userId, request.getStatus());
+        return ResponseEntity.ok(new ApiResponse<>(true, "Membership status updated", membership));
     }
 
     @PutMapping("/libraries/{libraryId}/members/{userId}/primary")

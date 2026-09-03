@@ -26,6 +26,16 @@ public interface UserOrganizationRepository extends JpaRepository<UserOrganizati
     List<UserOrganization> findActiveByOrganizationId(@Param("organizationId") Long organizationId);
     
     /**
+     * Every membership of an organization regardless of status, with the user
+     * fetched, for the member list. findActiveByOrganizationId stays the
+     * authorisation-facing query; this one is for display only.
+     */
+    @Query("SELECT uo FROM UserOrganization uo JOIN FETCH uo.user "
+            + "WHERE uo.id.organizationId = :organizationId "
+            + "ORDER BY uo.isPrimary DESC, uo.joinedAt")
+    List<UserOrganization> findAllByOrganizationIdWithUser(@Param("organizationId") Long organizationId);
+
+    /**
      * Check if a user has an ACTIVE membership in an organization.
      * Returns true only if the membership exists AND status = 'ACTIVE'.
      * This provides query-level enforcement of membership visibility.

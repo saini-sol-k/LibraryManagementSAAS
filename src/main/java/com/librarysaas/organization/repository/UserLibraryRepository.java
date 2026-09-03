@@ -26,6 +26,16 @@ public interface UserLibraryRepository extends JpaRepository<UserLibrary, UserLi
     List<UserLibrary> findActiveByLibraryId(@Param("libraryId") Long libraryId);
     
     /**
+     * Every membership of a library regardless of status, with the user
+     * fetched, for the member list. findActiveByLibraryId stays the
+     * authorisation-facing query; this one is for display only.
+     */
+    @Query("SELECT ul FROM UserLibrary ul JOIN FETCH ul.user "
+            + "WHERE ul.id.libraryId = :libraryId "
+            + "ORDER BY ul.isPrimary DESC, ul.joinedAt")
+    List<UserLibrary> findAllByLibraryIdWithUser(@Param("libraryId") Long libraryId);
+
+    /**
      * Check if a user has an ACTIVE membership in a library.
      * Returns true only if the membership exists AND status = 'ACTIVE'.
      * This provides query-level enforcement of membership visibility.
