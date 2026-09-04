@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -49,6 +51,9 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
 
     @Autowired
     private ObjectMapper mapper;
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     private static final AtomicInteger SEQ = new AtomicInteger(9000);
 
@@ -627,6 +632,92 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
         BigDecimal total = money(report.get("totalCollected"));
         assertThat(byDay).usingComparator(BigDecimal::compareTo).isEqualTo(total);
         assertThat(byMethod).usingComparator(BigDecimal::compareTo).isEqualTo(total);
+    }
+
+    /**
+     * A receipt taken late in the library's evening belongs to that evening's
+     * day, not the next one.
+     *
+     * The day bucket is built in SQL by shifting the stored timestamp. That
+     * stored value already carries the zone the JVM wrote it in, so the shift
+     * has to be the difference between that zone and the library's, not the
+     * library's whole offset from UTC. Using the whole offset counted
+     * Asia/Kolkata twice and moved every receipt after 18:30 local into
+     * tomorrow, which also made byDay stop reconciling with the headline total.
+     *
+     * The timestamp is pinned rather than taken from the clock, so this holds
+     * whatever time of day the suite runs, and it is written in the storage
+     * zone's frame so it holds whatever zone the JVM runs in.
+     */
+    @Test
+    public void aLateEveningReceiptIsReportedOnTheSameLocalDay() throws Exception {
+        String token = ownerToken();
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(zone);
+
+        Map<String, Object> invoice = new LinkedHashMap<>();
+        invoice.put("studentId", 3);
+        invoice.put("invoiceNumber", "INV-TZ" + SEQ.incrementAndGet());
+        invoice.put("amount", "900.00");
+        invoice.put("dueDate", "2026-12-31");
+
+        var created = mvc.perform(post("/api/libraries/1/student-fees")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(invoice)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long feeId = data(created.getResponse().getContentAsString()).get("studentFeeId").asLong();
+
+        String receipt = "REC-TZ" + SEQ.incrementAndGet();
+        Map<String, Object> payment = new LinkedHashMap<>();
+        payment.put("receiptNumber", receipt);
+        payment.put("amount", "123.45");
+        payment.put("paymentMethod", "CASH");
+
+        mvc.perform(post("/api/student-fees/" + feeId + "/payments")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(payment)))
+                .andExpect(status().isCreated());
+
+        // 23:30 on the library's clock, expressed the way the column stores it.
+        LocalDateTime storedAt = today.atTime(23, 30).atZone(zone)
+                .withZoneSameInstant(ZoneId.systemDefault())
+                .toLocalDateTime();
+        jdbc.update("UPDATE payment SET payment_date = ? WHERE receipt_number = ?",
+                storedAt, receipt);
+
+        var res = mvc.perform(get("/api/libraries/1/reports/collection")
+                        .param("from", today.minusDays(1).toString())
+                        .param("to", today.toString())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode report = data(res.getResponse().getContentAsString());
+
+        BigDecimal collectedToday = BigDecimal.ZERO;
+        BigDecimal byDay = BigDecimal.ZERO;
+        for (JsonNode row : report.get("byDay")) {
+            LocalDate day = LocalDate.parse(row.get("date").asText());
+            assertThat(day)
+                    .as("a bucket must never fall outside the requested range")
+                    .isBetween(today.minusDays(1), today);
+            byDay = byDay.add(money(row.get("amount")));
+            if (day.equals(today)) {
+                collectedToday = money(row.get("amount"));
+            }
+        }
+
+        assertThat(collectedToday)
+                .as("the 23:30 receipt belongs to today, not tomorrow")
+                .usingComparator(BigDecimal::compareTo)
+                .isGreaterThanOrEqualTo(new BigDecimal("123.45"));
+
+        // A misplaced bucket would also break this reconciliation.
+        assertThat(byDay).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(money(report.get("totalCollected")));
     }
 
     /** Only successful payments count, matching the finance module's balance rule. */

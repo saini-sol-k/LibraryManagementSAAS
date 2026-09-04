@@ -22,7 +22,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -212,7 +212,7 @@ public class ReportingServiceImpl implements ReportingService {
         // Grouping by the library's local day happens in the database, using the
         // zone's offset at the start of the range. See the query's own note on
         // daylight-saving transitions.
-        int offsetMinutes = offsetMinutesAt(fromDate, zone);
+        int offsetMinutes = bucketShiftMinutes(fromDate, zone);
         List<CollectionReportResponse.DailyCollection> byDay = new ArrayList<>();
         for (Object[] row : reportingRepository.sumPaymentsByLocalDay(
                 libraryId, PAYMENT_SUCCESS, rangeStart, rangeEnd, offsetMinutes)) {
@@ -307,10 +307,26 @@ public class ReportingServiceImpl implements ReportingService {
         return day.atStartOfDay(zone).withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
     }
 
-    /** The zone's offset from UTC, in minutes, on a given day. */
-    private int offsetMinutesAt(LocalDate day, ZoneId zone) {
-        ZoneOffset offset = day.atStartOfDay(zone).getOffset();
-        return offset.getTotalSeconds() / 60;
+    /**
+     * Minutes to add to a stored timestamp to reach the library's local clock.
+     *
+     * The timestamp columns hold local date-times written by the JVM in its own
+     * default zone, the same assumption {@link #startOfLocalDay} relies on. A
+     * stored value therefore already carries that zone's offset, so shifting it
+     * by the library's full offset from UTC would apply an offset twice and push
+     * late-evening payments into the following day. The shift is the difference
+     * between the two zones, which is zero whenever the JVM already runs in the
+     * library's own zone.
+     *
+     * Both offsets are read at the same instant, so a zone with a daylight-saving
+     * transition is measured consistently on either side of it.
+     */
+    private int bucketShiftMinutes(LocalDate day, ZoneId zone) {
+        ZonedDateTime libraryMidnight = day.atStartOfDay(zone);
+        int libraryOffset = libraryMidnight.getOffset().getTotalSeconds() / 60;
+        int storageOffset = libraryMidnight.withZoneSameInstant(ZoneId.systemDefault())
+                .getOffset().getTotalSeconds() / 60;
+        return libraryOffset - storageOffset;
     }
 
     private Map<String, Long> toCountMap(List<Object[]> rows) {

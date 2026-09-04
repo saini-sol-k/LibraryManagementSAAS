@@ -141,10 +141,16 @@ public interface ReportingRepository extends Repository<Library, Long> {
      * Rows of [localDay, count, sum], bucketed by the library's calendar day.
      *
      * Native because the bucket has to be the library's local date, not the
-     * database server's. The stored timestamp is shifted by the library's offset
-     * in minutes and then truncated to a date, so grouping happens entirely in
-     * the database. The WHERE clause still filters on the raw column, so
+     * database server's. The stored timestamp is shifted by {@code offsetMinutes}
+     * and then truncated to a date, so grouping happens entirely in the database.
+     * The WHERE clause still filters on the raw column, so
      * idx_payment_library_date is still used to select the rows before grouping.
+     *
+     * {@code offsetMinutes} is the difference between the library's zone and the
+     * zone the timestamps were written in, not the library's full offset from
+     * UTC. Passing the full offset would count the storage zone twice and bucket
+     * late-evening payments into the next day. The caller computes it; see
+     * ReportingServiceImpl#bucketShiftMinutes.
      *
      * The offset is evaluated once, for the start of the range. Zones with a
      * daylight-saving transition inside the range would bucket the transition
