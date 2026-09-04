@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,4 +38,21 @@ public interface SeatAssignmentRepository extends JpaRepository<SeatAssignment, 
             + "WHERE a.seat.seatId = :seatId "
             + "ORDER BY a.startDate DESC, a.assignmentId DESC")
     List<SeatAssignment> findHistoryBySeatId(@Param("seatId") Long seatId);
+
+    /**
+     * Which of these seats are currently allocated. Used before a seat-count
+     * reduction withdraws seats, so the check is one query for the
+     * whole block rather than one per seat.
+     */
+    @Query("SELECT DISTINCT a.seat.seatId FROM SeatAssignment a "
+            + "WHERE a.status = 'ACTIVE' AND a.seat.seatId IN :seatIds")
+    List<Long> findActiveSeatIdsIn(@Param("seatIds") Collection<Long> seatIds);
+
+    /**
+     * Which of these seats any assignment has ever pointed at, active or released.
+     * A reduction retires such a seat instead of deleting it, so the allocation
+     * history keeps resolving to a real row.
+     */
+    @Query("SELECT DISTINCT a.seat.seatId FROM SeatAssignment a WHERE a.seat.seatId IN :seatIds")
+    List<Long> findSeatIdsWithAssignments(@Param("seatIds") Collection<Long> seatIds);
 }

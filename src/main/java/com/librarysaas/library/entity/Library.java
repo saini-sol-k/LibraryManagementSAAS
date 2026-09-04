@@ -47,6 +47,18 @@ public class Library {
     @Column(name = "currency", length = 10)
     private String currency;
 
+    /**
+     * How many seats the library is configured to have. This is the source of
+     * truth: the seat rows themselves follow from it. Numbering is derived from
+     * this value rather than from the seat table, because seat_number is a
+     * VARCHAR and its maximum is lexicographic - "9" would sort above "100".
+     */
+    @Column(name = "seat_count", nullable = false)
+    // Defaulted so a library created outside onboarding - which does not ask for
+    // a seat count - still satisfies the NOT NULL column. Zero means "not yet
+    // configured", and the owner sets a real count afterwards.
+    private Integer seatCount = 0;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -159,6 +171,14 @@ public class Library {
 
     public void setCurrency(String currency) {
         this.currency = currency;
+    }
+
+    public Integer getSeatCount() {
+        return seatCount;
+    }
+
+    public void setSeatCount(Integer seatCount) {
+        this.seatCount = seatCount;
     }
 
     public java.time.LocalDateTime getCreatedAt() {

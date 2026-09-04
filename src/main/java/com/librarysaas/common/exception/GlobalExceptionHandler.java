@@ -24,6 +24,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.librarysaas.seat.json.SeatCountDeserializer;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -80,10 +82,48 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
             MissingServletRequestParameterException.class})
-    public ResponseEntity<ApiResponse<Void>> handleMalformedRequest(Exception ex, HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<?>> handleMalformedRequest(Exception ex, HttpServletRequest request) {
         log.debug("Invalid request on {}: {}", request.getRequestURI(), ex.getClass().getSimpleName());
+
+        // A body that could not be read at all is normally a client bug with
+        // nothing useful to say about it. The exception is a deserializer that
+        // rejected a well-formed value on purpose - a decimal seat count, say -
+        // which carries a message written for the user and knows which field it
+        // came from. Relay that as a field error so it lands on the input rather
+        // than as a generic "invalid request".
+        ApiResponse<Map<String, String>> deliberate = deliberateRejection(ex);
+        if (deliberate != null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(deliberate);
+        }
+
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ApiResponse<>(false, "Invalid request data", null, "BAD_REQUEST"));
+    }
+
+    /**
+     * Recognises a rejection a custom deserializer made deliberately and turns it
+     * into the same VALIDATION_ERROR shape Bean Validation produces, so the client
+     * handles both the same way.
+     *
+     * Returns null for every other malformed body, which keeps the existing
+     * generic response for the cases that genuinely have nothing to tell the user.
+     */
+    private ApiResponse<Map<String, String>> deliberateRejection(Exception ex) {
+        if (!(ex instanceof HttpMessageNotReadableException)
+                || !(ex.getCause() instanceof InvalidFormatException ife)
+                || ife.getPath().isEmpty()) {
+            return null;
+        }
+        if (!SeatCountDeserializer.WHOLE_NUMBER_REQUIRED.equals(ife.getOriginalMessage())) {
+            return null;
+        }
+
+        String field = ife.getPath().get(ife.getPath().size() - 1).getFieldName();
+        if (field == null) {
+            return null;
+        }
+        return new ApiResponse<>(false, "Validation failed",
+                Map.of(field, ife.getOriginalMessage()), "VALIDATION_ERROR");
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

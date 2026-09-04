@@ -1,8 +1,14 @@
 package com.librarysaas.admin.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.librarysaas.seat.json.SeatCountDeserializer;
+import com.librarysaas.seat.service.SeatProvisioningService;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
@@ -43,6 +49,17 @@ public class CustomerOnboardingRequest {
     @Schema(description = "Optional. Derived from the library name when omitted.")
     private String libraryCode;
 
+    @JsonDeserialize(using = SeatCountDeserializer.class)
+    @NotNull(message = "Number of seats is required.")
+    @Min(value = SeatProvisioningService.MIN_SEAT_COUNT,
+            message = "Number of seats must be greater than 0.")
+    @Max(value = SeatProvisioningService.MAX_SEAT_COUNT,
+            message = "Number of seats cannot exceed 10000.")
+    @Schema(description = "How many seats the library has. The backend creates exactly this "
+            + "many seats, numbered from 1, inside the same onboarding transaction.",
+            example = "100")
+    private Integer seatCount;
+
     @Size(max = 50, message = "Timezone must not exceed 50 characters")
     @Schema(description = "IANA zone id, e.g. Asia/Kolkata. Defaults to the library default when omitted. "
             + "Drives every daily figure the reporting module produces for this library.")
@@ -69,6 +86,14 @@ public class CustomerOnboardingRequest {
     @Size(max = 30, message = "Mobile must not exceed 30 characters")
     @Pattern(regexp = "^[0-9+][0-9 ()-]{5,19}$", message = "Mobile must be a valid contact number")
     private String adminMobile;
+
+    public Integer getSeatCount() {
+        return seatCount;
+    }
+
+    public void setSeatCount(Integer seatCount) {
+        this.seatCount = seatCount;
+    }
 
     public String getOrganizationName() {
         return organizationName;

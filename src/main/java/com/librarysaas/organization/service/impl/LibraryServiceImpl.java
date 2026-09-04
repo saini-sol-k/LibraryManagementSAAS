@@ -9,12 +9,16 @@ import com.librarysaas.library.entity.Library;
 import com.librarysaas.library.repository.LibraryRepository;
 import com.librarysaas.organization.dto.LibraryCreateRequest;
 import com.librarysaas.organization.dto.LibraryResponse;
+import com.librarysaas.organization.dto.LibrarySeatCountRequest;
+import com.librarysaas.organization.dto.LibrarySeatCountResponse;
 import com.librarysaas.organization.dto.LibraryUpdateRequest;
 import com.librarysaas.organization.entity.Organization;
 import com.librarysaas.organization.entity.UserLibrary;
 import com.librarysaas.organization.repository.OrganizationRepository;
 import com.librarysaas.organization.repository.UserLibraryRepository;
 import com.librarysaas.organization.service.LibraryService;
+import com.librarysaas.seat.dto.SeatProvisioningResult;
+import com.librarysaas.seat.service.SeatProvisioningService;
 import com.librarysaas.security.TenantAuthorizationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -43,16 +47,19 @@ public class LibraryServiceImpl implements LibraryService {
     private final OrganizationRepository organizationRepository;
     private final UserLibraryRepository userLibraryRepository;
     private final TenantAuthorizationService tenantAuthorizationService;
+    private final SeatProvisioningService seatProvisioningService;
 
     @Autowired
     public LibraryServiceImpl(LibraryRepository libraryRepository,
                             OrganizationRepository organizationRepository,
                             UserLibraryRepository userLibraryRepository,
-                            TenantAuthorizationService tenantAuthorizationService) {
+                            TenantAuthorizationService tenantAuthorizationService,
+                            SeatProvisioningService seatProvisioningService) {
         this.libraryRepository = libraryRepository;
         this.organizationRepository = organizationRepository;
         this.userLibraryRepository = userLibraryRepository;
         this.tenantAuthorizationService = tenantAuthorizationService;
+        this.seatProvisioningService = seatProvisioningService;
     }
 
     @Override
@@ -219,6 +226,53 @@ public class LibraryServiceImpl implements LibraryService {
         lib.setUpdatedAt(LocalDateTime.now());
         Library saved = libraryRepository.save(lib);
         return LibraryResponse.from(saved);
+    }
+
+    /**
+     * Seat count is gated on LIBRARY_UPDATE, which V1 grants to exactly two
+     * roles: SUPER_ADMIN, which holds every permission, and ORGANIZATION_OWNER.
+     * Library managers, receptionists, accountants and library staff do not have
+     * it. That is precisely the audience allowed to change the seat count, so no new
+     * role or permission was introduced for this.
+     *
+     * Ownership is then a second, separate question, and requireLibraryAccess
+     * answers it from the existing user_library membership: an organization
+     * owner reaches only the libraries they belong to, and another customer's
+     * library is refused. The library id stays bound to every query the
+     * provisioner runs, including for a super admin - nothing here widens a
+     * lookup for the platform role.
+     */
+    @Override
+    @Transactional
+    @PreAuthorize("hasAuthority('LIBRARY_UPDATE')")
+    public LibrarySeatCountResponse updateSeatCount(Long libraryId,
+                                                          LibrarySeatCountRequest request) {
+        Long currentUserId = tenantAuthorizationService.getCurrentUserId().orElse(null);
+        if (currentUserId == null) {
+            throw new ForbiddenException("You do not have permission to perform this operation");
+        }
+
+        // Read the library first so an id that does not exist is 404 rather than
+        // 403, matching what the rest of this service does.
+        Library lib = libraryRepository.findById(libraryId)
+                .orElseThrow(() -> new ResourceNotFoundException("Library not found", "LIBRARY_NOT_FOUND"));
+
+        tenantAuthorizationService.requireLibraryAccess(currentUserId, libraryId);
+
+        Integer previousSeatCount = lib.getSeatCount();
+
+        // The provisioner writes the new seat count onto the entity as part of
+        // reconciling the seats, so the two can never disagree: either both are
+        // applied or the transaction rolls back.
+        SeatProvisioningResult result =
+                seatProvisioningService.applySeatCount(lib, request.getSeatCount(), currentUserId);
+
+        lib.setUpdatedAt(LocalDateTime.now());
+        lib.setUpdatedBy(currentUserId);
+        Library saved = libraryRepository.save(lib);
+
+        return new LibrarySeatCountResponse(
+                saved.getLibraryId(), saved.getName(), previousSeatCount, result);
     }
 
     @Override

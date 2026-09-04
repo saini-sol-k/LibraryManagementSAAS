@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -53,4 +54,12 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     @Query("SELECT a FROM Attendance a JOIN FETCH a.student LEFT JOIN FETCH a.seat "
             + "WHERE a.attendanceId = :attendanceId")
     Optional<Attendance> findByIdWithDetail(@Param("attendanceId") Long attendanceId);
+
+    /**
+     * Which of these seats carry attendance history. A capacity reduction refuses
+     * to take such a seat out of service, so an attendance record is never left
+     * pointing at a seat the library no longer presents.
+     */
+    @Query("SELECT DISTINCT a.seat.seatId FROM Attendance a WHERE a.seat.seatId IN :seatIds")
+    List<Long> findSeatIdsWithAttendance(@Param("seatIds") Collection<Long> seatIds);
 }

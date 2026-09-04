@@ -18,6 +18,8 @@ public class LibraryResponse {
     private LocalTime closingTime;
     private String timezone;
     private String currency;
+    /** How many seats the library is configured to have. Seat rows follow from it. */
+    private Integer seatCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -36,6 +38,7 @@ public class LibraryResponse {
         this.closingTime = lib.getClosingTime();
         this.timezone = lib.getTimezone();
         this.currency = lib.getCurrency();
+        this.seatCount = lib.getSeatCount();
         this.createdAt = lib.getCreatedAt();
         this.updatedAt = lib.getUpdatedAt();
     }
@@ -156,5 +159,13 @@ public class LibraryResponse {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public Integer getSeatCount() {
+        return seatCount;
+    }
+
+    public void setSeatCount(Integer seatCount) {
+        this.seatCount = seatCount;
     }
 }

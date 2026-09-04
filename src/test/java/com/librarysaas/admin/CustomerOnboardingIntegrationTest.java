@@ -22,10 +22,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * the seeded Testcontainers MySQL.
  *
  * <p><b>A freshly onboarded library is the leakage detector here.</b> It contains
- * no students, no seats, no memberships, no attendance and no payments, so every
- * figure it reports must be zero. If any query in any module ever lost its
- * tenant predicate, a brand new tenant would immediately report the whole
- * database - five students, eight seats - and these tests would fail. The same
+ * no students, no memberships, no attendance and no payments, so every figure it
+ * reports must be zero, and it holds exactly the seats it was onboarded with and
+ * no others. If any query in any module ever lost its tenant predicate, a brand
+ * new tenant would immediately report the whole database - five students, every
+ * seat in it - and these tests would fail. The same
  * assertion runs as super admin, because unrestricted tenant access must not
  * widen a filter.
  *
@@ -82,12 +83,22 @@ public class CustomerOnboardingIntegrationTest extends com.librarysaas.Integrati
         return login("manager1@brightfuture.example", "Password@123");
     }
 
+    /**
+     * Seats every onboarded customer is created with.
+     *
+     * Small on purpose: the assertions care that the count is exactly this and
+     * not the whole seat table, and a large number would only slow every test in
+     * the class down.
+     */
+    private static final int SEATS_PER_CUSTOMER = 5;
+
     private Map<String, Object> requestFor(String tag) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("organizationName", "Customer " + tag);
         body.put("organizationCode", "CUST-" + tag);
         body.put("libraryName", "Library " + tag);
         body.put("libraryCode", "LIB-" + tag);
+        body.put("seatCount", SEATS_PER_CUSTOMER);
         body.put("timezone", "Asia/Kolkata");
         body.put("adminUsername", "admin" + tag);
         body.put("adminEmail", "admin" + tag + "@customer.example");
@@ -453,7 +464,11 @@ public class CustomerOnboardingIntegrationTest extends com.librarysaas.Integrati
             JsonNode data = mapper.readTree(res.getResponse().getContentAsString()).get("data");
 
             assertThat(data.get("totalStudents").asInt()).isZero();
-            assertThat(data.get("totalSeats").asInt()).isZero();
+            // Not zero any more: onboarding creates the capacity the customer asked
+            // for. It is still the leakage detector it always was - a query that
+            // lost its tenant predicate would report every seat in the database
+            // rather than exactly the handful this customer was given.
+            assertThat(data.get("totalSeats").asInt()).isEqualTo(SEATS_PER_CUSTOMER);
             assertThat(data.get("activeMemberships").asInt()).isZero();
             assertThat(data.get("attendanceToday").asInt()).isZero();
             assertThat(data.get("paymentsToday").asInt()).isZero();

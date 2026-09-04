@@ -167,6 +167,17 @@ public class SeatServiceImpl implements SeatService {
         return SeatResponse.from(seatRepository.save(seat), null);
     }
 
+    /**
+     * A seat number is assigned when the seat is generated and is fixed for the
+     * life of the seat. It is the physical sheet the student is sent to, and it
+     * is what attendance and allocation history are read against, so renumbering
+     * seat 25 to seat 50 would silently rewrite what those records mean.
+     *
+     * The number is still required in the payload - the client sends back the one
+     * it was given - and a request that carries a different one is refused here.
+     * The form renders the field read-only, but that is a convenience; this check
+     * is the boundary, because a read-only input is not a security control.
+     */
     @Override
     @Transactional
     @PreAuthorize("hasAuthority('SEAT_UPDATE')")
@@ -175,11 +186,11 @@ public class SeatServiceImpl implements SeatService {
         Seat seat = requireSeat(libraryId, seatId);
 
         String seatNumber = request.getSeatNumber().trim();
-        if (!seatNumber.equalsIgnoreCase(seat.getSeatNumber())
-                && seatRepository.existsByLibraryLibraryIdAndSeatNumber(libraryId, seatNumber)) {
-            throw new ConflictException(
-                    "Seat " + seatNumber + " already exists in this library",
-                    "SEAT_NUMBER_ALREADY_EXISTS");
+        if (!seatNumber.equals(seat.getSeatNumber())) {
+            throw new BusinessException(
+                    "Seat number cannot be changed. Seat " + seat.getSeatNumber()
+                            + " keeps the number it was created with.",
+                    "SEAT_NUMBER_NOT_EDITABLE");
         }
 
         SeatAssignment active = activeAssignmentOrNull(seatId);
@@ -197,7 +208,6 @@ public class SeatServiceImpl implements SeatService {
             seat.setStatus(status);
         }
 
-        seat.setSeatNumber(seatNumber);
         seat.setZone(resolveZone(libraryId, request.getZoneId()));
         seat.setSeatType(resolveSeatType(libraryId, request.getSeatTypeId()));
         seat.setUpdatedAt(LocalDateTime.now());

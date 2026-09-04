@@ -3,6 +3,8 @@ package com.librarysaas.organization.controller;
 import com.librarysaas.common.response.ApiResponse;
 import com.librarysaas.organization.dto.LibraryCreateRequest;
 import com.librarysaas.organization.dto.LibraryResponse;
+import com.librarysaas.organization.dto.LibrarySeatCountRequest;
+import com.librarysaas.organization.dto.LibrarySeatCountResponse;
 import com.librarysaas.organization.dto.LibraryUpdateRequest;
 import com.librarysaas.organization.service.LibraryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -76,6 +78,32 @@ public class LibraryController {
             @Valid @RequestBody LibraryUpdateRequest request) {
         LibraryResponse response = libraryService.updateLibrary(libraryId, request);
         return ResponseEntity.ok(new ApiResponse<>(true, "Library updated", response));
+    }
+
+    /**
+     * A dedicated endpoint rather than a field on the update payload: changing
+     * the seat count creates, removes or retires seat rows, and the reply reports what
+     * which the shared LibraryResponse has no room for. PUT /{libraryId} keeps
+     * its existing contract untouched.
+     *
+     * LIBRARY_UPDATE is held only by SUPER_ADMIN and ORGANIZATION_OWNER, and the
+     * service additionally requires membership of this library, so one customer
+     * cannot resize another customer's library.
+     */
+    @PatchMapping("/{libraryId}/seat-count")
+    @PreAuthorize("hasAuthority('LIBRARY_UPDATE')")
+    @Operation(summary = "Set a library total seat count",
+            description = "Raising the seat count creates only the missing seats, numbered "
+                    + "continuously from the previous count; existing seats keep their "
+                    + "number and status. Lowering it takes the surplus seats out of service "
+                    + "and never deletes them, and is refused when any of them is allocated "
+                    + "or carries attendance history. Requires SUPER_ADMIN or the owner of "
+                    + "this library.")
+    public ResponseEntity<ApiResponse<LibrarySeatCountResponse>> updateSeatCount(
+            @PathVariable Long libraryId,
+            @Valid @RequestBody LibrarySeatCountRequest request) {
+        LibrarySeatCountResponse response = libraryService.updateSeatCount(libraryId, request);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Seat count updated", response));
     }
 
     @DeleteMapping("/{libraryId}")

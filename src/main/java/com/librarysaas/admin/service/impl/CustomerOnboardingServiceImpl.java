@@ -10,9 +10,13 @@ import com.librarysaas.organization.dto.LibraryCreateRequest;
 import com.librarysaas.organization.dto.LibraryResponse;
 import com.librarysaas.organization.dto.OrganizationCreateRequest;
 import com.librarysaas.organization.dto.OrganizationResponse;
+import com.librarysaas.library.entity.Library;
+import com.librarysaas.library.repository.LibraryRepository;
 import com.librarysaas.organization.service.LibraryService;
 import com.librarysaas.organization.service.OrganizationService;
 import com.librarysaas.organization.service.UserManagementService;
+import com.librarysaas.seat.dto.SeatProvisioningResult;
+import com.librarysaas.seat.service.SeatProvisioningService;
 import com.librarysaas.security.TenantAuthorizationService;
 import com.librarysaas.security.model.User;
 import com.librarysaas.security.repository.UserRepository;
@@ -78,6 +82,8 @@ public class CustomerOnboardingServiceImpl implements CustomerOnboardingService 
     private final UserRoleRepository userRoleRepository;
     private final PasswordEncoder passwordEncoder;
     private final TenantAuthorizationService tenantAuthorizationService;
+    private final LibraryRepository libraryRepository;
+    private final SeatProvisioningService seatProvisioningService;
 
     @Autowired
     public CustomerOnboardingServiceImpl(OrganizationService organizationService,
@@ -86,7 +92,9 @@ public class CustomerOnboardingServiceImpl implements CustomerOnboardingService 
                                          UserRepository userRepository,
                                          UserRoleRepository userRoleRepository,
                                          PasswordEncoder passwordEncoder,
-                                         TenantAuthorizationService tenantAuthorizationService) {
+                                         TenantAuthorizationService tenantAuthorizationService,
+                                         LibraryRepository libraryRepository,
+                                         SeatProvisioningService seatProvisioningService) {
         this.organizationService = organizationService;
         this.libraryService = libraryService;
         this.userManagementService = userManagementService;
@@ -94,6 +102,8 @@ public class CustomerOnboardingServiceImpl implements CustomerOnboardingService 
         this.userRoleRepository = userRoleRepository;
         this.passwordEncoder = passwordEncoder;
         this.tenantAuthorizationService = tenantAuthorizationService;
+        this.libraryRepository = libraryRepository;
+        this.seatProvisioningService = seatProvisioningService;
     }
 
     @Override
@@ -122,6 +132,17 @@ public class CustomerOnboardingServiceImpl implements CustomerOnboardingService 
 
         LibraryResponse library = libraryService.createLibrary(
                 organization.getOrganizationId(), libraryRequest(request, timezone));
+
+        // The seats the customer is paying for, created inside this same
+        // transaction. The library entity is re-read so it is managed here: the
+        // provisioner writes the configured count onto it, and a failure
+        // anywhere below rolls the seats back with the rest of the tenant.
+        Library libraryEntity = libraryRepository.findById(library.getLibraryId())
+                .orElseThrow(() -> new BusinessException(
+                        "The new library could not be read back", "LIBRARY_CREATION_FAILED"));
+        SeatProvisioningResult seats = seatProvisioningService.applySeatCount(
+                libraryEntity, request.getSeatCount(),
+                tenantAuthorizationService.getCurrentUserId().orElse(null));
 
         String temporaryPassword = generatePassword();
         User admin = persistAdministrator(request, username, email, temporaryPassword);
@@ -157,7 +178,10 @@ public class CustomerOnboardingServiceImpl implements CustomerOnboardingService 
                         library.getLibraryId(),
                         library.getLibraryCode(),
                         library.getName(),
-                        library.getTimezone()),
+                        library.getTimezone(),
+                        seats.getSeatCount(),
+                        seats.getSeatsCreated(),
+                        seats.getSeatRange()),
                 new CustomerOnboardingResponse.UserSummary(
                         admin.getUserId(),
                         admin.getUsername(),

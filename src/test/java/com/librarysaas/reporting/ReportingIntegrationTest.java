@@ -52,6 +52,18 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
 
     private static final AtomicInteger SEQ = new AtomicInteger(9000);
 
+    /**
+     * Seats each seeded library holds: the ones V1 gave it by name, plus the 100
+     * that V2__add_library_seat_count created when it set every existing
+     * library to a capacity of 100.
+     *
+     * Library 1 is deliberately absent: other test classes add and retire seats
+     * there, so it is only ever compared, never pinned to a number.
+     */
+    private static final long V2_BACKFILLED_SEATS = 100L;
+    private static final long LIBRARY_2_SEATS = 2L + V2_BACKFILLED_SEATS;
+    private static final long LIBRARY_3_SEATS = 1L + V2_BACKFILLED_SEATS;
+
     private String login(String identifier, String password) throws Exception {
         var res = mvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -115,9 +127,11 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
     /* ============================================ leakage: the critical test */
 
     /**
-     * Library 3 is seeded with one student, one seat and one active membership,
-     * and nothing mutates it. The whole database holds at least five students and
-     * eight seats.
+     * Library 3 is seeded with one student, one lettered seat and one active
+     * membership, and nothing mutates it. V2__add_library_seat_count gave every
+     * library that existed at the time a capacity of 100 and the seats to match,
+     * so library 3 holds 101 seats in total. The whole database holds at least
+     * five students and three libraries worth of seats.
      *
      * A reporting query that lost its library_id predicate would report those
      * global figures here. These exact assertions are what make that impossible
@@ -132,9 +146,9 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
                 .as("library 3 has one student; the database has five")
                 .isEqualTo(1L);
         assertThat(summary.get("totalSeats").asLong())
-                .as("library 3 has one seat; the database has eight")
-                .isEqualTo(1L);
-        assertThat(summary.get("availableSeats").asLong()).isEqualTo(1L);
+                .as("library 3 has its own 101 seats, not every seat in the database")
+                .isEqualTo(LIBRARY_3_SEATS);
+        assertThat(summary.get("availableSeats").asLong()).isEqualTo(LIBRARY_3_SEATS);
         assertThat(summary.get("occupiedSeats").asLong()).isZero();
         assertThat(summary.get("activeMemberships").asLong())
                 .as("library 3 has one active membership; the database has at least five")
@@ -154,7 +168,7 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
         // report its own single-row totals rather than the whole database.
         JsonNode restricted = dashboard(3L, superAdminToken());
         assertThat(restricted.get("totalStudents").asLong()).isEqualTo(1L);
-        assertThat(restricted.get("totalSeats").asLong()).isEqualTo(1L);
+        assertThat(restricted.get("totalSeats").asLong()).isEqualTo(LIBRARY_3_SEATS);
         assertThat(restricted.get("activeMemberships").asLong()).isEqualTo(1L);
 
         // On a library both callers may read, unrestricted access must make no
@@ -172,9 +186,14 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
                 .isEqualTo(money(asOwner.get("collectionToday")));
 
         // And a super admin still sees library 1 only, never the global picture.
+        // Expressed against the sum of the three seeded libraries rather than a
+        // fixed number, so the assertion keeps its meaning as seats are added.
+        long everySeededLibrary = asAdmin.get("totalSeats").asLong()
+                + dashboard(2L, superAdminToken()).get("totalSeats").asLong()
+                + dashboard(3L, superAdminToken()).get("totalSeats").asLong();
         assertThat(asAdmin.get("totalSeats").asLong())
-                .as("library 1 has five seats; the database has eight")
-                .isLessThan(8L);
+                .as("library 1 reports its own seats, not every library's")
+                .isLessThan(everySeededLibrary);
     }
 
     /**
@@ -188,8 +207,8 @@ public class ReportingIntegrationTest extends com.librarysaas.IntegrationTestBas
         long two = dashboard(2L, admin).get("totalSeats").asLong();
         long three = dashboard(3L, admin).get("totalSeats").asLong();
 
-        assertThat(three).isEqualTo(1L);
-        assertThat(two).isEqualTo(2L);
+        assertThat(three).isEqualTo(LIBRARY_3_SEATS);
+        assertThat(two).isEqualTo(LIBRARY_2_SEATS);
         assertThat(one).isGreaterThan(three);
         assertThat(one == two && two == three)
                 .as("identical totals across libraries would mean the tenant filter is gone")

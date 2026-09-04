@@ -87,12 +87,19 @@ public class CustomerOnboardingResponse {
         private final String libraryCode;
         private final String name;
         private final String timezone;
+        private final Integer seatCount;
+        private final Integer seatsCreated;
+        private final String seatRange;
 
-        public LibrarySummary(Long libraryId, String libraryCode, String name, String timezone) {
+        public LibrarySummary(Long libraryId, String libraryCode, String name, String timezone,
+                              Integer seatCount, Integer seatsCreated, String seatRange) {
             this.libraryId = libraryId;
             this.libraryCode = libraryCode;
             this.name = name;
             this.timezone = timezone;
+            this.seatCount = seatCount;
+            this.seatsCreated = seatsCreated;
+            this.seatRange = seatRange;
         }
 
         public Long getLibraryId() {
@@ -111,10 +118,27 @@ public class CustomerOnboardingResponse {
             return timezone;
         }
 
+        @Schema(description = "Configured total seat count for the new library.")
+        public Integer getSeatCount() {
+            return seatCount;
+        }
+
+        @Schema(description = "How many seat rows were created. Equals the seat count for a new library.")
+        public Integer getSeatsCreated() {
+            return seatsCreated;
+        }
+
+        @Schema(description = "Inclusive range of the generated seat numbers, e.g. \"1 - 100\".")
+        public String getSeatRange() {
+            return seatRange;
+        }
+
         @Override
         public String toString() {
             return "LibrarySummary{libraryId=" + libraryId + ", libraryCode='" + libraryCode
-                    + "', name='" + name + "', timezone='" + timezone + "'}";
+                    + "', name='" + name + "', timezone='" + timezone
+                    + "', seatCount=" + seatCount + ", seatsCreated=" + seatsCreated
+                    + ", seatRange='" + seatRange + "'}";
         }
     }
 

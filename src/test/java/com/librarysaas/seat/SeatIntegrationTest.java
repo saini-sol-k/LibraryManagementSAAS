@@ -163,12 +163,15 @@ public class SeatIntegrationTest extends com.librarysaas.IntegrationTestBase {
         long seatId = mapper.readTree(created.getResponse().getContentAsString())
                 .at("/data/seatId").asLong();
 
+        // An update carries the seat number back unchanged. A seat keeps the
+        // number it was created with - SeatCountIntegrationTest covers the
+        // refusal - so only the status moves here.
         mvc.perform(put("/api/libraries/1/seats/" + seatId)
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(mapper.writeValueAsString(seat("T-101", "MAINTENANCE"))))
+                        .content(mapper.writeValueAsString(seat("T-100", "MAINTENANCE"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.seatNumber").value("T-101"))
+                .andExpect(jsonPath("$.data.seatNumber").value("T-100"))
                 .andExpect(jsonPath("$.data.status").value("MAINTENANCE"));
 
         mvc.perform(delete("/api/libraries/1/seats/" + seatId)
