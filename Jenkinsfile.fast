@@ -158,8 +158,26 @@ pipeline {
                     cmd /c "docker push localhost:5000/$env:IMAGE_NAME`:$tag 2>&1" | Select-Object -Last 3
                     if ($LASTEXITCODE -ne 0) { throw "docker push failed" }
 
-                    $tags = Invoke-RestMethod -Uri "http://localhost:5000/v2/$env:IMAGE_NAME/tags/list" -TimeoutSec 20
-                    if ($tags.tags -notcontains $tag) { throw "tag $tag not present in registry after push" }
+                    # The registry can take a while to answer right after a large push,
+                    # and a single 20s call once failed a deploy whose push had in fact
+                    # succeeded. Poll instead: docker push already returned success, so
+                    # this is confirmation, and only a tag that never appears is a failure.
+                    $deadline = (Get-Date).AddSeconds(180)
+                    $tags = $null
+                    $attempt = 0
+                    while ((Get-Date) -lt $deadline) {
+                        $attempt++
+                        try {
+                            $tags = Invoke-RestMethod -Uri "http://localhost:5000/v2/$env:IMAGE_NAME/tags/list" -TimeoutSec 30 -UseBasicParsing
+                            if ($tags.tags -contains $tag) { break }
+                            Write-Host "attempt ${attempt}: tag $tag not listed yet"
+                        } catch {
+                            Write-Host "attempt ${attempt}: registry not answering - $($_.Exception.Message)"
+                        }
+                        $tags = $null
+                        Start-Sleep -Seconds 10
+                    }
+                    if (-not $tags -or $tags.tags -notcontains $tag) { throw "tag $tag not present in registry after push" }
                     Write-Host "registry now holds: $($tags.tags -join ', ')"
                 '''
             }
