@@ -224,8 +224,22 @@ pipeline {
                     $ErrorActionPreference = "Stop"
                     $ns = $env:K8S_NAMESPACE
 
-                    cmd /c "kubectl -n $ns rollout status deployment/$env:DEPLOYMENT --timeout=300s 2>&1"
-                    if ($LASTEXITCODE -ne 0) {
+                    # Under load this cluster can take several minutes just to observe a
+                    # spec update, which starved a single 300s watch: one build spent
+                    # nearly four minutes waiting for the controller and then timed out
+                    # while the new pod was still pulling its image, for a rollout that
+                    # finished on its own two minutes later. Watch in shorter slices up
+                    # to a generous deadline instead, so a slow start is not a failure
+                    # and a transient API error does not abort the watch either.
+                    $deadline = (Get-Date).AddMinutes(15)
+                    $rolledOut = $false
+                    while ((Get-Date) -lt $deadline) {
+                        cmd /c "kubectl -n $ns rollout status deployment/$env:DEPLOYMENT --timeout=120s 2>&1"
+                        if ($LASTEXITCODE -eq 0) { $rolledOut = $true; break }
+                        $left = [int](($deadline - (Get-Date)).TotalSeconds)
+                        Write-Host "rollout still in progress, watching again ($left s left)"
+                    }
+                    if (-not $rolledOut) {
                         Write-Host "--- pods ---";   cmd /c "kubectl -n $ns get pods 2>&1"
                         Write-Host "--- events ---"; cmd /c "kubectl -n $ns get events --sort-by=.lastTimestamp 2>&1" | Select-Object -Last 20
                         throw "rollout did not complete"
@@ -244,7 +258,7 @@ pipeline {
 
                     # Wait for a Ready pod on this exact image; old pods may still be
                     # terminating for a few seconds after rollout status returns.
-                    $deadline = (Get-Date).AddSeconds(120)
+                    $deadline = (Get-Date).AddSeconds(300)
                     $match = $null
                     while ((Get-Date) -lt $deadline) {
                         $rows = cmd /c "kubectl -n $ns get pods -l app.kubernetes.io/component=backend --field-selector=status.phase=Running -o jsonpath=`"{range .items[*]}{.metadata.name} {.status.containerStatuses[0].ready} {.spec.containers[0].image}{'\\n'}{end}`" 2>&1"
