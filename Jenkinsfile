@@ -14,7 +14,8 @@
  *    registry container on the host and pulled back by the node at 192.168.65.254.
  *  - NodePort is not published to the Windows host on this node, so the service is
  *    ClusterIP and reached through `kubectl port-forward`.
- *  - MySQL runs as a host Docker container on port 3307, not inside the cluster.
+ *  - MySQL runs as a host Docker container on port 3310 (library-saas-mysql), a
+ *    dedicated instance for this project, not inside the cluster.
  *
  * Required Jenkins credentials:
  *   library-saas-jwt-secret  (Secret text)      >= 32 bytes

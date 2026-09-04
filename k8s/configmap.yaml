@@ -12,13 +12,16 @@ data:
   SPRING_PROFILES_ACTIVE: "dev"
   SERVER_PORT: "8080"
 
-  # MySQL runs as a Docker container on the host (aklibrary_mysql, port 3307),
-  # not inside the cluster, so it is not duplicated as a Kubernetes workload.
+  # Library SaaS has its own dedicated MySQL container on the host
+  # (library-saas-mysql, host port 3310), not inside the cluster, so it is not
+  # duplicated as a Kubernetes workload. It is a separate instance with its own
+  # volume and credentials, shared with no other project.
   # host.docker.internal resolves to the host from Docker Desktop pods.
   MYSQL_HOST: "host.docker.internal"
-  MYSQL_PORT: "3307"
+  MYSQL_PORT: "3310"
   MYSQL_DATABASE: "library_saas"
 
-  # Flyway stays off in the dev profile; the schema already exists.
-  # Set to "true" for a first deploy against an empty database.
-  SPRING_FLYWAY_ENABLED: "false"
+  # The dedicated database starts empty, so Flyway owns schema creation from
+  # V1__initial_schema.sql. It is idempotent: on an already-migrated database it
+  # reads flyway_schema_history and applies nothing.
+  SPRING_FLYWAY_ENABLED: "true"

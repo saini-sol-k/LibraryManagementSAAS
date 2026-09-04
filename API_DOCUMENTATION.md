@@ -24,7 +24,7 @@ Once the application is running, access the API documentation at:
 - Docker Desktop (for MySQL Testcontainer)
 - Environment variables configured:
   ```bash
-  DB_URL=jdbc:mysql://localhost:3306/library_saas_db
+  DB_URL=jdbc:mysql://localhost:3310/library_saas
   DB_USERNAME=root
   DB_PASSWORD=root
   SERVER_PORT=8081

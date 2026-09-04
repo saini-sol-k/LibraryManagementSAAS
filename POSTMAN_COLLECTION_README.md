@@ -299,7 +299,7 @@ Student search supports:
 
 - **OpenAPI Documentation:** `http://localhost:8080/swagger-ui.html`
 - **API Docs:** `http://localhost:8080/v3/api-docs`
-- **Database:** localhost:3307 (MySQL)
+- **Database:** localhost:3310 (MySQL)
   - User: root
   - Password: password
   - Database: librarydb
