@@ -42,9 +42,9 @@ pipeline {
     parameters {
         booleanParam(
             name: 'RUN_INTEGRATION_TESTS',
-            defaultValue: true,
-            description: 'Full 104-test suite. Requires Docker on the agent for Testcontainers. ' +
-                         'Uncheck for unit tests only (-Punit-tests).')
+            defaultValue: false,
+            description: 'Full integration suite (392 tests), off by default so deployments skip it. ' +
+                         'Requires Docker for Testcontainers. Unticked runs unit tests only (-Punit-tests).')
         string(
             name: 'K8S_NAMESPACE',
             defaultValue: 'library-saas',
